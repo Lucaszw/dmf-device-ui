@@ -879,8 +879,11 @@ class DmfDeviceCanvas(GtkShapesCanvasView):
         gtk.Menu
             Context menu.
         '''
-        routes = self.df_routes.loc[self.df_routes.electrode_i == shape,
-                                    'route_i'].astype(int).unique().tolist()
+        if self.df_routes.electrode_i.count() != 0:
+            routes = self.df_routes.loc[self.df_routes.electrode_i == shape,
+                                        'route_i'].astype(int).unique().tolist()
+        else:
+            routes = []
 
         def clear_electrode_states(widget):
             self.emit('clear-electrode-states')

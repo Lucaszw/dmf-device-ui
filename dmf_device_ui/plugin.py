@@ -7,6 +7,8 @@ from pygtkhelpers.utils import gsignal
 from zmq_plugin.plugin import Plugin
 from zmq_plugin.schema import decode_content_data
 import gtk
+import pandas as pd
+import paho_mqtt_helpers as pmh
 import zmq
 
 from . import generate_plugin_name
@@ -14,10 +16,16 @@ from . import generate_plugin_name
 logger = logging.getLogger(__name__)
 
 
-class DevicePlugin(Plugin):
+class DevicePlugin(Plugin, pmh.BaseMqttReactor):
     def __init__(self, parent, *args, **kwargs):
         self.parent = parent
+        pmh.BaseMqttReactor.__init__(self)
         super(DevicePlugin, self).__init__(*args, **kwargs)
+        self.start()
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui/add-route')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui/get-routes')
+        self.mqtt_client.subscribe('microdrop/droplet-planning-plugin'
+                                    '/routes-set')
 
     def check_sockets(self):
         '''
@@ -64,13 +72,7 @@ class DevicePlugin(Plugin):
             elif ((source == 'droplet_planning_plugin') and
                   (msg_type == 'execute_reply')):
                 msg = json.loads(msg_json)
-                if msg['content']['command'] in ('add_route', ):
-                    self.execute_async('droplet_planning_plugin',
-                                       'get_routes')
-                elif msg['content']['command'] in ('get_routes', ):
-                    data = decode_content_data(msg)
-                    #self.emit('routes-set', data)
-                    self.parent.on_routes_set(data)
+
             else:
                 self.most_recent = msg_json
         except zmq.Again:
@@ -86,7 +88,19 @@ class DevicePlugin(Plugin):
         self.execute_async('microdrop.electrode_controller_plugin',
                            'get_channel_states')
         # Request routes.
-        self.execute_async('droplet_planning_plugin', 'get_routes')
+        self.mqtt_client.publish('microdrop/dmf-device-ui/get-routes',
+                                 json.dumps(None))
+    def on_message(self, client, userdata, msg):
+        '''
+        Callback for when a ``PUBLISH`` message is received from the broker.
+        '''
+        logger.info('[on_message] %s: "%s"', msg.topic, msg.payload)
+        if msg.topic == 'microdrop/dmf-device-ui/add-route':
+            self.mqtt_client.publish("microdrop/dmf-device-ui/get-routes",
+                                     json.dumps(None))
+        if msg.topic == 'microdrop/droplet-planning-plugin/routes-set':
+            data = pd.read_json(msg.payload)
+            self.parent.on_routes_set(data)
 
     def on_execute__get_allocation(self, request):
         return self.parent.get_allocation()

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
 from subprocess import Popen
+import json
 import logging
 import sys
 
@@ -17,6 +18,7 @@ import gobject
 import gtk
 import numpy as np
 import pandas as pd
+import paho_mqtt_helpers as pmh
 import zmq
 
 from .options import DeviceViewInfo, DebugView
@@ -26,7 +28,7 @@ from . import generate_plugin_name
 logger = logging.getLogger(__name__)
 
 
-class DmfDeviceViewBase(SlaveView):
+class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
     def __init__(self, device_canvas, hub_uri='tcp://localhost:31000',
                  plugin_name=None, allocation=None, video_transport='tcp',
                  video_host='*', video_port=None, debug_view=False):
@@ -50,7 +52,10 @@ class DmfDeviceViewBase(SlaveView):
         self.video_config = None
         self.modify_corners_undo = []
         self.modify_corners_redo = []
+        pmh.BaseMqttReactor.__init__(self)
         super(DmfDeviceViewBase, self).__init__()
+        self.start()
+        self.mqtt_client.subscribe("microdrop/dmf-device-ui/clear-routes")
 
     def __del__(self):
         self.cleanup_video()
@@ -172,6 +177,16 @@ class DmfDeviceViewBase(SlaveView):
     ###########################################################################
     # Device canvas event callbacks
     ###########################################################################
+
+    def on_message(self, client, userdata, msg):
+        '''
+        Callback for when a ``PUBLISH`` message is received from the broker.
+        '''
+        logger.info('[on_message] %s: "%s"', msg.topic, msg.payload)
+        if msg.topic == 'microdrop/dmf-device-ui/clear-routes':
+            self.mqtt_client.publish('microdrop/dmf-device-ui/get-routes',
+                                     json.dumps(None))
+
     def on_canvas_slave__electrode_mouseover(self, slave, data):
         self.info_slave.electrode_id = data['electrode_id']
         try:
@@ -219,28 +234,22 @@ class DmfDeviceViewBase(SlaveView):
         try:
             shortest_path = self.canvas_slave.device.find_path(source_id,
                                                                target_id)
-            self.plugin.execute_async('droplet_planning_plugin',
-                                      'add_route', drop_route=shortest_path)
+            self.mqtt_client.publish('microdrop/dmf-device-ui/add-route',
+                                     json.dumps(shortest_path))
         except nx.NetworkXNoPath:
             logger.error('No path found between %s and %s.', source_id,
                          target_id)
 
     def on_canvas_slave__route_selected(self, slave, route):
         logger.debug('Route selected: %s', route)
-        self.plugin.execute_async('droplet_planning_plugin',
-                                  'add_route', drop_route=route.electrode_ids)
-
+        self.mqtt_client.publish('microdrop/dmf-device-ui/add-route',
+                                 json.dumps(route.electrode_ids))
     def on_canvas_slave__route_electrode_added(self, slave, electrode_id):
         logger.debug('Route electrode added: %s', electrode_id)
 
     def on_canvas_slave__clear_routes(self, slave, electrode_id):
-        def refresh_routes(reply):
-            # Request routes.
-            self.plugin.execute_async('droplet_planning_plugin',
-                                      'get_routes')
-        self.plugin.execute_async('droplet_planning_plugin',
-                                  'clear_routes', electrode_id=electrode_id,
-                                  callback=refresh_routes)
+        self.mqtt_client.publish('microdrop/dmf-device-ui/clear-routes',
+                                 json.dumps(electrode_id))
 
     def on_canvas_slave__clear_electrode_states(self, slave):
         if self.plugin is not None:
@@ -252,8 +261,11 @@ class DmfDeviceViewBase(SlaveView):
                                            .electrodes)))
 
     def on_canvas_slave__execute_routes(self, slave, electrode_id):
-        self.plugin.execute_async('droplet_planning_plugin',
-                                  'execute_routes', electrode_id=electrode_id)
+        data = {}
+        data['electrode_i'] = electrode_id
+
+        self.mqtt_client.publish('microdrop/dmf-device-ui/execute-routes',
+                                 json.dumps(data))
 
     def on_canvas_slave__set_electrode_channels(self, slave, electrode_id,
                                                 channels):
@@ -360,6 +372,16 @@ class DmfDeviceViewBase(SlaveView):
             self.canvas_slave.set_surface('actuated_shapes',
                                           self.canvas_slave
                                           .render_actuated_shapes())
+            self.canvas_slave.cairo_surface = flatten_surfaces(self
+                                                               .canvas_slave
+                                                               .df_surfaces)
+            gtk.idle_add(self.canvas_slave.draw)
+
+    def on_routes_set(self, df_routes):
+        if not self.canvas_slave.df_routes.equals(df_routes):
+            self.canvas_slave.df_routes = df_routes
+            self.canvas_slave.set_surface('routes',
+                                          self.canvas_slave.render_routes())
             self.canvas_slave.cairo_surface = flatten_surfaces(self
                                                                .canvas_slave
                                                                .df_surfaces)
