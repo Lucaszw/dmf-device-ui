@@ -208,10 +208,17 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
         if self.plugin is None:
             return
         state = self.canvas_slave.electrode_states.get(data['electrode_id'], 0)
-        self.plugin.execute_async('microdrop.electrode_controller_plugin',
-                                  'set_electrode_states', electrode_states=
-                                  pd.Series([not state],
-                                            index=[data['electrode_id']]))
+
+        electrode_states = pd.Series([not state], index=[data['electrode_id']])
+        msg = {}
+        msg['electrode_states'] = electrode_states.to_json()
+
+        self.mqtt_client.publish('microdrop/dmf-device-ui/set-electrode-states',
+                                    json.dumps(msg))
+        # self.plugin.execute_async('microdrop.electrode_controller_plugin',
+        #                           'set_electrode_states', electrode_states=
+        #                           pd.Series([not state],
+        #                                     index=[data['electrode_id']]))
 
     def on_canvas_slave__electrode_pair_selected(self, slave, data):
         '''
@@ -253,13 +260,13 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
 
     def on_canvas_slave__clear_electrode_states(self, slave):
         if self.plugin is not None:
-            (self.plugin.execute('microdrop.electrode_controller_plugin',
-                                 'set_electrode_states',
-                                 electrode_states=
-                                 pd.Series(0, dtype=int,
+            electrode_states = pd.Series(0, dtype=int,
                                            index=self.canvas_slave.device
-                                           .electrodes)))
-
+                                           .electrodes)
+            msg = {}
+            msg['electrode_states'] = electrode_states.to_json()
+            self.mqtt_client.publish('microdrop/dmf-device-ui/'
+                                      'set-electrode-states', json.dumps(msg))
     def on_canvas_slave__execute_routes(self, slave, electrode_id):
         data = {}
         data['electrode_i'] = electrode_id

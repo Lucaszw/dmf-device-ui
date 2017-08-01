@@ -23,9 +23,12 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
         super(DevicePlugin, self).__init__(*args, **kwargs)
         self.start()
         self.mqtt_client.subscribe('microdrop/dmf-device-ui/add-route')
-        self.mqtt_client.subscribe('microdrop/dmf-device-ui/get-routes')
         self.mqtt_client.subscribe('microdrop/droplet-planning-plugin'
                                     '/routes-set')
+        self.mqtt_client.subscribe('microdrop/electrode-controller-plugin/'
+                                    'set-electrode-states')
+        self.mqtt_client.subscribe('microdrop/electrode-controller-plugin/'
+                                    'get-channel-states')
 
     def check_sockets(self):
         '''
@@ -51,28 +54,6 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
                     data = decode_content_data(msg)
                     if data is not None:
                         self.parent.on_device_loaded(data)
-            elif ((source == 'microdrop.electrode_controller_plugin') and
-                (msg_type == 'execute_reply')):
-                msg = json.loads(msg_json)
-                if msg['content']['command'] in ('set_electrode_state',
-                                                 'set_electrode_states'):
-                    data = decode_content_data(msg)
-                    if data is None:
-                        print msg
-                    else:
-                        #self.emit('electrode-states-updated', data)
-                        self.parent.on_electrode_states_updated(data)
-                elif msg['content']['command'] == 'get_channel_states':
-                    data = decode_content_data(msg)
-                    if data is None:
-                        print msg
-                    else:
-                        #self.emit('electrode-states-set', data)
-                        self.parent.on_electrode_states_set(data)
-            elif ((source == 'droplet_planning_plugin') and
-                  (msg_type == 'execute_reply')):
-                msg = json.loads(msg_json)
-
             else:
                 self.most_recent = msg_json
         except zmq.Again:
@@ -85,8 +66,8 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
 
     def request_refresh(self):
         # Request electrode/channel states.
-        self.execute_async('microdrop.electrode_controller_plugin',
-                           'get_channel_states')
+        self.mqtt_client.publish('microdrop/dmf-device-ui/get-channel-states',
+                                 json.dumps(None))
         # Request routes.
         self.mqtt_client.publish('microdrop/dmf-device-ui/get-routes',
                                  json.dumps(None))
@@ -101,6 +82,19 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
         if msg.topic == 'microdrop/droplet-planning-plugin/routes-set':
             data = pd.read_json(msg.payload)
             self.parent.on_routes_set(data)
+
+        if msg.topic == 'microdrop/electrode-controller-plugin/set-electrode-states':
+            data = json.loads(msg.payload)
+            data['electrode_states'] = pd.read_json(data['electrode_states'], typ='series',dtype=False)
+            self.parent.on_electrode_states_updated(data)
+
+        if msg.topic == 'microdrop/electrode-controller-plugin/get-channel-states':
+            data = json.loads(msg.payload)
+            if data is None: print msg
+            else:
+                data['electrode_states'] = pd.read_json(data['electrode_states'] , typ='series', dtype=False)
+                data['channel_states'] = pd.read_json(data['channel_states'] , typ='series', dtype=False)
+                self.parent.on_electrode_states_set(data)
 
     def on_execute__get_allocation(self, request):
         return self.parent.get_allocation()
