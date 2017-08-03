@@ -23,12 +23,16 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
         super(DevicePlugin, self).__init__(*args, **kwargs)
         self.start()
         self.mqtt_client.subscribe('microdrop/dmf-device-ui/add-route')
-        self.mqtt_client.subscribe('microdrop/droplet-planning-plugin'
-                                    '/routes-set')
-        self.mqtt_client.subscribe('microdrop/electrode-controller-plugin/'
-                                    'set-electrode-states')
-        self.mqtt_client.subscribe('microdrop/electrode-controller-plugin/'
-                                    'get-channel-states')
+        self.mqtt_client.subscribe('microdrop/droplet-planning-plugin/routes-set')
+        self.mqtt_client.subscribe('microdrop/electrode-controller-plugin/set-electrode-states')
+        self.mqtt_client.subscribe('microdrop/electrode-controller-plugin/get-channel-states')
+        self.mqtt_client.subscribe('microdrop/device-info-plugin/get-device')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-surface-alphas')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-video-config')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-default-corners')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-corners')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/get-video-settings')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/terminate')
 
     def check_sockets(self):
         '''
@@ -47,15 +51,7 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
                           .recv_multipart(zmq.NOBLOCK))
             source, target, msg_type, msg_json = msg_frames
 
-            if ((source == 'microdrop.device_info_plugin') and
-                (msg_type == 'execute_reply')):
-                msg = json.loads(msg_json)
-                if msg['content']['command'] == 'get_device':
-                    data = decode_content_data(msg)
-                    if data is not None:
-                        self.parent.on_device_loaded(data)
-            else:
-                self.most_recent = msg_json
+            self.most_recent = msg_json
         except zmq.Again:
             pass
         except:
@@ -71,30 +67,105 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
         # Request routes.
         self.mqtt_client.publish('microdrop/dmf-device-ui/get-routes',
                                  json.dumps(None))
+
     def on_message(self, client, userdata, msg):
         '''
         Callback for when a ``PUBLISH`` message is received from the broker.
         '''
-        logger.info('[on_message] %s: "%s"', msg.topic, msg.payload)
+        # logger.info('[on_message] %s: "%s"', msg.topic, msg.payload)
         if msg.topic == 'microdrop/dmf-device-ui/add-route':
             self.mqtt_client.publish("microdrop/dmf-device-ui/get-routes",
                                      json.dumps(None))
+
         if msg.topic == 'microdrop/droplet-planning-plugin/routes-set':
-            data = pd.read_json(msg.payload)
+            # XXX: Data comes unsorted after pd.read_json(...)
+            data = pd.read_json(msg.payload).sort_index()
             self.parent.on_routes_set(data)
 
         if msg.topic == 'microdrop/electrode-controller-plugin/set-electrode-states':
             data = json.loads(msg.payload)
-            data['electrode_states'] = pd.read_json(data['electrode_states'], typ='series',dtype=False)
+            data['electrode_states'] = pd.read_json(data['electrode_states'],
+                                        typ='series', dtype=False)
             self.parent.on_electrode_states_updated(data)
 
         if msg.topic == 'microdrop/electrode-controller-plugin/get-channel-states':
             data = json.loads(msg.payload)
             if data is None: print msg
             else:
-                data['electrode_states'] = pd.read_json(data['electrode_states'] , typ='series', dtype=False)
-                data['channel_states'] = pd.read_json(data['channel_states'] , typ='series', dtype=False)
+                data['electrode_states'] = pd.read_json(data['electrode_states'],
+                                            typ='series', dtype=False)
+                data['channel_states'] = pd.read_json(data['channel_states'],
+                                            typ='series', dtype=False)
                 self.parent.on_electrode_states_set(data)
+
+        if msg.topic == 'microdrop/device-info-plugin/get-device':
+            data = json.loads(msg.payload)
+            if data:
+                self.parent.on_device_loaded(data)
+
+        if msg.topic == 'microdrop/dmf-device-ui-plugin/set-surface-alphas':
+            data = json.loads(msg.payload)
+            data['surface_alphas'] = pd.read_json(data['surface_alphas'],
+                                      typ='series',dtype=False)
+            self.set_surface_alphas(data)
+
+        if msg.topic == 'microdrop/dmf-device-ui-plugin/set-video-config':
+            data = json.loads(msg.payload)
+            data['video_config'] = pd.read_json(data['video_config'],
+                                      typ='series',dtype=False)
+            self.set_video_config(data)
+
+        if msg.topic == 'microdrop/dmf-device-ui-plugin/set-default-corners':
+            data = json.loads(msg.payload)
+            data['df_canvas_corners'] = pd.read_json(data['df_canvas_corners'],
+                                      typ='series',dtype=False)
+            data['df_frame_corners'] = pd.read_json(data['df_frame_corners'],
+                                      typ='series',dtype=False)
+            self.set_default_corners(data)
+
+        if msg.topic == 'microdrop/dmf-device-ui-plugin/set-corners':
+            data = json.loads(msg.payload)
+            data['df_canvas_corners'] = pd.read_json(data['df_canvas_corners'],
+                                      typ='series',dtype=False)
+            data['df_frame_corners'] = pd.read_json(data['df_frame_corners'],
+                                      typ='series',dtype=False)
+            self.set_corners(data)
+
+        if msg.topic == 'microdrop/dmf-device-ui-plugin/get-video-settings':
+            self.get_video_settings()
+
+        if msg.topic == 'microdrop/dmf-device-ui-plugin/terminate':
+            self.terminate()
+
+    def get_video_settings(self):
+        video_settings = {}
+
+        video_config = self.parent.video_config
+        if video_config:
+            video_settings['video_config'] = video_config.to_json()
+        else:
+            video_settings['video_config'] = ''
+
+        data = {'allocation': self.parent.get_allocation(),
+            'df_canvas_corners': self.parent.canvas_slave.df_canvas_corners,
+            'df_frame_corners': self.parent.canvas_slave.df_frame_corners}
+
+        for k in ('df_canvas_corners', 'df_frame_corners'):
+            if k in data:
+                data['allocation'][k[3:]] = data.pop(k).to_csv()
+
+        video_settings.update(data['allocation'])
+
+        surface_alphas = self.parent.canvas_slave.df_surfaces['alpha'].to_json()
+        if surface_alphas:
+            video_settings['surface_alphas'] = surface_alphas
+        else:
+            video_settings['surface_alphas'] = ''
+
+        self.mqtt_client.publish('microdrop/dmf-device-ui/get-video-settings',
+            json.dumps(video_settings))
+
+        return video_settings
 
     def on_execute__get_allocation(self, request):
         return self.parent.get_allocation()
@@ -102,6 +173,9 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
     def on_execute__set_allocation(self, request):
         data = decode_content_data(request)
         self.parent.set_allocation(data['allocation'])
+
+    def terminate(self):
+        self.parent.terminate()
 
     def on_execute__terminate(self, request):
         self.parent.terminate()
@@ -114,6 +188,14 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
     def on_execute__get_default_corners(self, request):
         return self.parent.canvas_slave.default_corners
 
+    def set_default_corners(self, data):
+        if 'canvas' in data and 'frame' in data:
+            for k in ('canvas', 'frame'):
+                self.parent.canvas_slave.default_corners[k] = data[k]
+        self.parent.canvas_slave.reset_canvas_corners()
+        self.parent.canvas_slave.reset_frame_corners()
+        self.parent.canvas_slave.update_transforms()
+
     def on_execute__set_default_corners(self, request):
         data = decode_content_data(request)
         if 'canvas' in data and 'frame' in data:
@@ -121,6 +203,12 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
                 self.parent.canvas_slave.default_corners[k] = data[k]
         self.parent.canvas_slave.reset_canvas_corners()
         self.parent.canvas_slave.reset_frame_corners()
+        self.parent.canvas_slave.update_transforms()
+
+    def set_corners(self, data):
+        if 'df_canvas_corners' in data and 'df_frame_corners' in data:
+            for k in ('df_canvas_corners', 'df_frame_corners'):
+                setattr(self.parent.canvas_slave, k, data[k])
         self.parent.canvas_slave.update_transforms()
 
     def on_execute__set_corners(self, request):
@@ -141,6 +229,28 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
 
     def on_execute__disable_video(self, request):
         self.parent.disable_video()
+
+    def set_video_config(self,data):
+        compare_fields = ['device_name', 'width', 'height', 'name', 'fourcc',
+                          'framerate']
+        if data['video_config'] is None:
+            i = None
+        else:
+            for i, row in self.parent.video_mode_slave.configs.iterrows():
+                if (row[compare_fields] ==
+                        data['video_config'][compare_fields]).all():
+                    break
+            else:
+                i = None
+        if i is None:
+            logger.error('Unsupported video config:\n%s', data['video_config'])
+            logger.error('Video configs:\n%s',
+                         self.parent.video_mode_slave.configs)
+            self.parent.video_mode_slave.config_combo.set_active(0)
+        else:
+            logger.error('Set video config (%d):\n%s', i + 1,
+                         data['video_config'])
+            self.parent.video_mode_slave.config_combo.set_active(i + 1)
 
     def on_execute__set_video_config(self, request):
         data = decode_content_data(request)
@@ -169,6 +279,12 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
         logger.debug('[on_execute__get_surface_alphas] %s',
                      self.parent.canvas_slave.df_surfaces)
         return self.parent.canvas_slave.df_surfaces['alpha']
+
+    def set_surface_alphas(self, data):
+        logger.debug('[on_execute__set_surface_alphas] %s',
+                     data['surface_alphas'])
+        for name, alpha in data['surface_alphas'].iteritems():
+            self.parent.canvas_slave.set_surface_alpha(name, alpha)
 
     def on_execute__set_surface_alphas(self, request):
         data = decode_content_data(request)

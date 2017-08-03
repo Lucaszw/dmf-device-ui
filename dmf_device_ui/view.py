@@ -7,6 +7,7 @@ import sys
 
 from cairo_helpers.surface import flatten_surfaces
 from microdrop_utility.gui import register_shortcuts
+from microdrop.dmf_device import DmfDevice
 from opencv_helpers.safe_cv import cv2
 from pygst_utils.video_view.mode import VideoModeSelector
 from pygst_utils.video_view.video_sink import Transform, VideoInfo
@@ -56,6 +57,7 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
         super(DmfDeviceViewBase, self).__init__()
         self.start()
         self.mqtt_client.subscribe("microdrop/dmf-device-ui/clear-routes")
+        self.mqtt_client.subscribe("microdrop/device-info-plugin/plugin-connected")
 
     def __del__(self):
         self.cleanup_video()
@@ -98,10 +100,11 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
         # Add "Refresh device" button to button box.
         self.refresh_device_button = gtk.Button('Refresh device')
         self.refresh_device_button.connect('clicked', lambda *args:
-                                           self.plugin
-                                           .execute_async('microdrop'
-                                                          '.device_info_plugin',
-                                                          'get_device'))
+                                           self.mqtt_client
+                                           .publish('microdrop/dmf-device-ui/'
+                                                          'get-device',
+                                                          json.dumps(None)))
+
         button_box.pack_start(self.refresh_device_button, False, False, 0)
         button_box.show_all()
 
@@ -186,6 +189,8 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
         if msg.topic == 'microdrop/dmf-device-ui/clear-routes':
             self.mqtt_client.publish('microdrop/dmf-device-ui/get-routes',
                                      json.dumps(None))
+        if msg.topic == 'microdrop/device-info-plugin/plugin-connected':
+            self.on_plugin_connected()
 
     def on_canvas_slave__electrode_mouseover(self, slave, data):
         self.info_slave.electrode_id = data['electrode_id']
@@ -289,13 +294,14 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
                 if modified:
                     self.canvas_slave.canvas = None
                     # Device channels were modified, so request device refresh.
-                    self.plugin.execute_async('microdrop.device_info_plugin',
-                                              'get_device')
-        self.plugin.execute_async('microdrop.device_info_plugin',
-                                  'set_electrode_channels',
-                                  electrode_id=electrode_id,
-                                  channels=channels,
-                                  callback=command_callback)
+                    self.mqtt_client.publish('microdrop/dmf-device-ui/get-device',
+                                             json.dumps(None))
+
+        msg = {}
+        msg['electrode_id'] = electrode_id
+        msg['channels'] = channels
+        self.mqtt_client.publish('microdrop/dmf-device-ui/set-electrode-channels',
+                                  json.dumps(msg))
 
     def on_canvas_slave__surfaces_reset(self, slave, df_surfaces):
         logger.debug('[surfaces reset]\n%s', df_surfaces)
@@ -340,18 +346,21 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
         logger.error('Timed out waiting for heartbeat ping.')
         self.cleanup()
 
-    def on_plugin_connected(self, plugin):
-        self.plugin = plugin
+    def on_plugin_connected(self, plugin=None):
 
         # Block until device is retrieved from device info plugin.
-        self.plugin.execute_async('microdrop.device_info_plugin',
-                                  'get_device')
-        # Periodically process outstanding plugin socket messages.
-        self.socket_timeout_id = gtk.timeout_add(25, self.plugin.check_sockets)
-        ## Periodically ping hub to verify connection is alive.
-        self.heartbeat_timeout_id = gtk.timeout_add(2000, self.ping_hub)
+        self.mqtt_client.publish('microdrop/dmf-device-ui/get-device',
+                                 json.dumps(None))
+        if plugin:
+            self.plugin = plugin
+            # Periodically process outstanding plugin socket messages.
+            self.socket_timeout_id = gtk.timeout_add(25, self.plugin.check_sockets)
+            ## Periodically ping hub to verify connection is alive.
+            self.heartbeat_timeout_id = gtk.timeout_add(2000, self.ping_hub)
 
-    def on_device_loaded(self, device):
+    def on_device_loaded(self, data):
+        # NOTE: Find alternatives to transfering DmfDevice class over mqtt
+        device = DmfDevice(data['svg_filepath'],name=data['name'])
         self.canvas_slave.set_device(device)
         self.info_slave.connection_count = self.canvas_slave.connection_count
         self.info_slave.electrode_count = self.canvas_slave.shape_count
@@ -384,15 +393,6 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
                                                                .df_surfaces)
             gtk.idle_add(self.canvas_slave.draw)
 
-    def on_routes_set(self, df_routes):
-        if not self.canvas_slave.df_routes.equals(df_routes):
-            self.canvas_slave.df_routes = df_routes
-            self.canvas_slave.set_surface('routes',
-                                          self.canvas_slave.render_routes())
-            self.canvas_slave.cairo_surface = flatten_surfaces(self
-                                                               .canvas_slave
-                                                               .df_surfaces)
-            gtk.idle_add(self.canvas_slave.draw)
 
     def on_routes_set(self, df_routes):
         if not self.canvas_slave.df_routes.equals(df_routes):
