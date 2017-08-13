@@ -14,7 +14,7 @@ from pygst_utils.video_view.video_sink import Transform, VideoInfo
 from pygtkhelpers.delegates import SlaveView
 from pygtkhelpers.ui.views import find_closest
 from pygtkhelpers.ui.views.surface import LayerAlphaController
-from zmq_plugin.schema import decode_content_data
+from zmq_plugin.schema import decode_content_data, PandasJsonEncoder
 import gobject
 import gtk
 import numpy as np
@@ -214,16 +214,11 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
             return
         state = self.canvas_slave.electrode_states.get(data['electrode_id'], 0)
 
-        electrode_states = pd.Series([not state], index=[data['electrode_id']])
         msg = {}
-        msg['electrode_states'] = electrode_states.to_json()
+        msg['electrode_states'] = pd.Series([not state], index=[data['electrode_id']])
 
-        self.mqtt_client.publish('microdrop/dmf-device-ui/set-electrode-states',
-                                    json.dumps(msg))
-        # self.plugin.execute_async('microdrop.electrode_controller_plugin',
-        #                           'set_electrode_states', electrode_states=
-        #                           pd.Series([not state],
-        #                                     index=[data['electrode_id']]))
+        topic = 'microdrop/dmf-device-ui/set-electrode-states'
+        self.mqtt_client.publish(topic,json.dumps(msg, cls=PandasJsonEncoder))
 
     def on_canvas_slave__electrode_pair_selected(self, slave, data):
         '''
@@ -260,8 +255,10 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
         logger.debug('Route electrode added: %s', electrode_id)
 
     def on_canvas_slave__clear_routes(self, slave, electrode_id):
+        msg = {}
+        msg['electrode_id'] = electrode_id
         self.mqtt_client.publish('microdrop/dmf-device-ui/clear-routes',
-                                 json.dumps(electrode_id))
+                                 json.dumps(msg))
 
     def on_canvas_slave__clear_electrode_states(self, slave):
         if self.plugin is not None:
@@ -269,9 +266,10 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
                                            index=self.canvas_slave.device
                                            .electrodes)
             msg = {}
-            msg['electrode_states'] = electrode_states.to_json()
-            self.mqtt_client.publish('microdrop/dmf-device-ui/'
-                                      'set-electrode-states', json.dumps(msg))
+            msg['electrode_states'] = electrode_states
+
+            self.mqtt_client.publish('microdrop/dmf-device-ui/set-electrode-states',
+                                      json.dumps(msg, cls=PandasJsonEncoder))
     def on_canvas_slave__execute_routes(self, slave, electrode_id):
         data = {}
         data['electrode_i'] = electrode_id

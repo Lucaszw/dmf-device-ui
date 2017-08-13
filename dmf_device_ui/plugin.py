@@ -5,7 +5,7 @@ import logging
 from pygtkhelpers.delegates import SlaveView
 from pygtkhelpers.utils import gsignal
 from zmq_plugin.plugin import Plugin
-from zmq_plugin.schema import decode_content_data
+from zmq_plugin.schema import decode_content_data, pandas_object_hook
 import gtk
 import pandas as pd
 import paho_mqtt_helpers as pmh
@@ -79,23 +79,18 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
 
         if msg.topic == 'microdrop/droplet-planning-plugin/routes-set':
             # XXX: Data comes unsorted after pd.read_json(...)
-            data = pd.read_json(msg.payload).sort_index()
+            data = json.loads(msg.payload, object_hook=pandas_object_hook)
             self.parent.on_routes_set(data)
 
         if msg.topic == 'microdrop/electrode-controller-plugin/set-electrode-states':
-            data = json.loads(msg.payload)
-            data['electrode_states'] = pd.read_json(data['electrode_states'],
-                                        typ='series', dtype=False)
+            data = json.loads(msg.payload, object_hook=pandas_object_hook)
             self.parent.on_electrode_states_updated(data)
 
         if msg.topic == 'microdrop/electrode-controller-plugin/get-channel-states':
-            data = json.loads(msg.payload)
-            if data is None: print msg
+            data = json.loads(msg.payload, object_hook=pandas_object_hook)
+            if data is None:
+                print msg
             else:
-                data['electrode_states'] = pd.read_json(data['electrode_states'],
-                                            typ='series', dtype=False)
-                data['channel_states'] = pd.read_json(data['channel_states'],
-                                            typ='series', dtype=False)
                 self.parent.on_electrode_states_set(data)
 
         if msg.topic == 'microdrop/device-info-plugin/get-device':
