@@ -22,17 +22,6 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
         pmh.BaseMqttReactor.__init__(self)
         super(DevicePlugin, self).__init__(*args, **kwargs)
         self.start()
-        self.mqtt_client.subscribe('microdrop/dmf-device-ui/add-route')
-        self.mqtt_client.subscribe('microdrop/droplet-planning-plugin/routes-set')
-        self.mqtt_client.subscribe('microdrop/electrode-controller-plugin/set-electrode-states')
-        self.mqtt_client.subscribe('microdrop/electrode-controller-plugin/get-channel-states')
-        self.mqtt_client.subscribe('microdrop/device-info-plugin/get-device')
-        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-surface-alphas')
-        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-video-config')
-        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-default-corners')
-        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-corners')
-        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/get-video-settings')
-        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/terminate')
 
     def check_sockets(self):
         '''
@@ -67,6 +56,19 @@ class DevicePlugin(Plugin, pmh.BaseMqttReactor):
         # Request routes.
         self.mqtt_client.publish('microdrop/dmf-device-ui/get-routes',
                                  json.dumps(None))
+
+    def on_connect(self, client, userdata, flags, rc):
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui/add-route')
+        self.mqtt_client.subscribe('microdrop/droplet-planning-plugin/routes-set')
+        self.mqtt_client.subscribe('microdrop/electrode-controller-plugin/set-electrode-states')
+        self.mqtt_client.subscribe('microdrop/electrode-controller-plugin/get-channel-states')
+        self.mqtt_client.subscribe('microdrop/device-info-plugin/get-device')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-surface-alphas')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-video-config')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-default-corners')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/set-corners')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/get-video-settings')
+        self.mqtt_client.subscribe('microdrop/dmf-device-ui-plugin/terminate')
 
     def on_message(self, client, userdata, msg):
         '''

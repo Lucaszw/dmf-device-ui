@@ -56,8 +56,6 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
         pmh.BaseMqttReactor.__init__(self)
         super(DmfDeviceViewBase, self).__init__()
         self.start()
-        self.mqtt_client.subscribe("microdrop/dmf-device-ui/clear-routes")
-        self.mqtt_client.subscribe("microdrop/device-info-plugin/plugin-connected")
 
     def __del__(self):
         self.cleanup_video()
@@ -180,6 +178,9 @@ class DmfDeviceViewBase(SlaveView, pmh.BaseMqttReactor):
     ###########################################################################
     # Device canvas event callbacks
     ###########################################################################
+    def on_connect(self, client, userdata, flags, rc):
+        self.mqtt_client.subscribe("microdrop/dmf-device-ui/clear-routes")
+        self.mqtt_client.subscribe("microdrop/device-info-plugin/plugin-connected")
 
     def on_message(self, client, userdata, msg):
         '''
